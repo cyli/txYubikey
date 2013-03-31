@@ -3,7 +3,7 @@ import json
 from twisted.internet import reactor
 from twisted.web.client import Agent
 
-from txyubico.client import YubiKeyValidator
+from txyubico.client import YubiKeyVerifier
 
 
 def print_result(result):
@@ -12,15 +12,15 @@ def print_result(result):
     print json.dumps(blob, sort_keys=True, indent=4)
 
 
-def run_validation(validator):
+def run_verification(verifier):
     incoming = raw_input("OTP ('q' to quit): ")
     if incoming.strip().lower() == 'q':
         reactor.stop()
         return
 
-    d = validator.validate(incoming)
+    d = verifier.verify(incoming)
     d.addCallback(print_result)
-    d.addBoth(lambda _: reactor.callLater(0, run_validation, validator))
+    d.addBoth(lambda _: reactor.callLater(0, run_verification, verifier))
     return d
 
 
@@ -34,8 +34,8 @@ if __name__ == "__main__":
     if api_key:
         api_key = api_key.encode("ASCII")
 
-    validator = YubiKeyValidator(agent, config['clientId'], api_key)
+    verifier = YubiKeyVerifier(agent, config['clientId'], api_key)
 
-    run_validation(validator)
+    run_verification(verifier)
 
     reactor.run()

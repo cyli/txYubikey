@@ -39,15 +39,15 @@ def generate_nonce():
     return uuid4().hex
 
 
-class YubiKeyValidationError(Exception):
+class YubiKeyVerificationError(Exception):
     """
     Error to be raised when the YubiKey fails to validate.
     """
 
 
-class YubiKeyValidator(object):
+class YubiKeyVerifier(object):
     """
-    An object that can be used to validate YubiKey OTP's.  For more
+    An object that can be used to verify YubiKey OTP's.  For more
     information, please see:
 
     1. https://code.google.com/p/yubikey-val-server-php/wiki/GettingStartedWritingClients
@@ -56,16 +56,16 @@ class YubiKeyValidator(object):
 
     3. http://www.yubico.com/develop/open-source-software/web-api-clients/server/
 
-    @ivar agent: The agent to use to validate against the validation server.
+    @ivar agent: The agent to use to verify against the validation server.
         Note that if the agent does not validate ssl certificates, the api key
         really should be provided so that requests are response signatures are
         validated.
     @type agent: L{twisted.web.client.Agent} or a L{twisted.web.client.Agent}
         wrapper
 
-    @ivar client_id: Specifies the requestor so that the end-point can
+    @ivar verifier_id: Specifies the requestor so that the end-point can
         retrieve correct shared secret for signing the response.
-    @type client_lid: C{str}
+    @type verifier_id: C{str}
 
     @ivar api_key: The API key that will be used to sign the request and
         the response (if given)
@@ -84,10 +84,10 @@ class YubiKeyValidator(object):
     @ivar scheme: "http" or "https" - defaults to 'https'
     @type scheme: C{str}
     """
-    def __init__(self, agent, client_id, api_key=None, nonce_generator=None,
+    def __init__(self, agent, verifier_id, api_key=None, nonce_generator=None,
                  validation_servers=None, scheme="https"):
         self.agent = agent
-        self.client_id = client_id
+        self.verifier_id = verifier_id
         self.api_key = api_key.decode('base64')
         self.scheme = scheme
 
@@ -158,21 +158,21 @@ class YubiKeyValidator(object):
                               response.split('\n') if line.strip('\r')])
 
         if 'otp' in response_dict and response_dict['otp'] != orig_otp:
-            raise YubiKeyValidationError(
+            raise YubiKeyVerificationError(
                 "Received response that does not match the OTP that was "
-                "sent to be validated.")
+                "sent to be verified.")
 
         if 'nonce' in response_dict and response_dict['nonce'] != orig_nonce:
-            raise YubiKeyValidationError(
+            raise YubiKeyVerificationError(
                 "Received response that does not match the OTP that was "
-                "sent to be validated.")
+                "sent to be verified.")
 
         signature = response_dict['h']
 
         self._maybe_sign_query(response_dict)
 
         if signature.decode('base64') != response_dict['h'].decode('base64'):
-            raise YubiKeyValidationError(
+            raise YubiKeyVerificationError(
                 "Received a response whose signature is invalid")
 
         return response_dict
@@ -236,7 +236,7 @@ class YubiKeyValidator(object):
                         str(one_result[1]))
                     deferred_list[i].addErrback(lambda _: None)
 
-                raise YubiKeyValidationError(
+                raise YubiKeyVerificationError(
                     "Could not successfully GET from any of the validation "
                     "servers.")
 
@@ -248,10 +248,10 @@ class YubiKeyValidator(object):
         d = DeferredList(deferred_list, fireOnOneCallback=True)
         return d.addCallback(_check_results)
 
-    def validate(self, otp, timestamp=None, sl=None, timeout=None):
+    def verify(self, otp, timestamp=None, sl=None, timeout=None):
         """
-        Validates an OTP against the validation servers provided to the
-        validator.
+        Verifies an OTP against the validation servers provided to the
+        verifier.
 
         It queries all servers in parallel and waits for answers. Servers will
         not respond positively until it has synchronized the new OTP counter
@@ -280,12 +280,12 @@ class YubiKeyValidator(object):
             response JSON from the validation server, and the
             validation server the response came from.
 
-        @raises: A L{YubiKeyValidationError} failure if unsuccessful (not
+        @raises: A L{YubiKeyVerificationError} failure if unsuccessful (not
             that the OTP was rejected, but that a failure occured during
             validation)
         """
         query_dict = {
-            'id': self.client_id,
+            'id': self.verifier_id,
             'otp': otp,
             'nonce': self.generate_nonce()
         }
