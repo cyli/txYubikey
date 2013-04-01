@@ -4,16 +4,20 @@ Client that verifies a Yubico OTP against a validation server.
 Only the v2 protocol is supported (see
 https://github.com/Yubico/yubikey-val/wiki/ValidationProtocolV20)
 """
-
 from cStringIO import StringIO
 from hashlib import sha1
 import hmac
+import re
 from urllib import urlencode
 from urlparse import urlunsplit
 from uuid import uuid4
 
-from twisted.internet.defer import Deferred, DeferredList
+from twisted.internet.defer import Deferred, DeferredList, fail
 from twisted.internet.protocol import Protocol
+
+
+_otp_re = re.compile("^\S{32,48}$")
+_nonce_re = re.compile("^\w{16,40}$")
 
 
 class _BodyReader(Protocol):
@@ -31,8 +35,8 @@ class _BodyReader(Protocol):
 def generate_nonce():
     """
     A method to generate a nonce to send to the validation server.  As
-    specified by the protocol, the nonce must be between 16 and 40 characters
-    long with random unique data.
+    specified by the protocol, the nonce must be between 16 and 40
+    alphanumeric characters long with random unique data.
 
     @returns: a random C{str} nonce between 16 and 40 characters long
     """
@@ -72,7 +76,8 @@ class YubiKeyVerifier(object):
     @type api_key: C{str} or C{None}
 
     @ivar nonce_generator: a callabale that generates a nonce - if not
-        provided defaults to L{generate_nonce}
+        provided defaults to L{generate_nonce}.  The generator must produces
+        nonces that are alphanumeric and be between 16 and 40 characters long.
     @type nonce_generator: C{callable}
 
     @ivar validation_servers: a list of network locations to one or more
@@ -259,6 +264,13 @@ class YubiKeyVerifier(object):
         valid (200, otp and nonce match, and signature is correct) response,
         positive (i.e., OTP is valid) or negative (i.e., OTP is replayed).
 
+        Note that signature validation errors may occur, due to implementation
+        details on the Yubico validation servers, if invalid parameters
+        are passed - e.g. if an OTP is provided one whose characters are
+        outside the ModHex alphabet).
+
+        See https://github.com/Yubico/yubikey-val/issues/8
+
         @param otp: The OTP from the YubiKey.
         @type otp: C{str}
 
@@ -268,11 +280,13 @@ class YubiKeyVerifier(object):
 
         @param sl: A value 0 to 100 indicating percentage of syncing required
             by client, or strings "fast" or "secure" to use server-configured
-            values; if None, let the server decide.  Defaults to None.
+            values; if None, let the server decide.  Defaults to None.  If
+            provided, will be coerced to an int between 0 and 100.
         @type sl: C{int} or C{None}
 
         @param timeout: Number of seconds to wait for sync responses; if None,
-            let the server decide. Defaults to None.
+            let the server decide. Defaults to None.  If provided, will be
+            coerced to an int.
         @type timeout: C{int} or C{None}
 
         @return: L{twisted.internet.defer.Deferred} that fires with a C{tuple}
@@ -284,6 +298,7 @@ class YubiKeyVerifier(object):
             that the OTP was rejected, but that a failure occured during
             validation)
         """
+
         query_dict = {
             'id': self.verifier_id,
             'otp': otp,
@@ -293,9 +308,17 @@ class YubiKeyVerifier(object):
         if timestamp is not None:
             query_dict['timestamp'] = int(bool(timestamp))
         if sl is not None:
-            query_dict['sl'] = sl
+            query_dict['sl'] = max(0, min(100, int(sl)))
         if timeout is not None:
-            query_dict['timeout'] = timeout
+            query_dict['timeout'] = int(timeout)
+
+        if _otp_re.search(otp) is None:
+            return fail(YubiKeyVerificationError(
+                "OTP needs to be between 32 and 48 characters long"))
+
+        if _nonce_re.search(query_dict['nonce']) is None:
+            return fail(YubiKeyVerificationError(
+                "Nonce generator produced an invalid nonce"))
 
         self._maybe_sign_query(query_dict)
         return self._request_from_all_servers(query_dict)

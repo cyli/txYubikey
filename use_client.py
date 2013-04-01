@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import json
 
 from twisted.internet import reactor
@@ -8,8 +10,8 @@ from txyubico.client import YubiKeyVerifier
 
 def print_result(result):
     blob, server = result
-    print "Got result from {0}".format(server)
-    print json.dumps(blob, sort_keys=True, indent=4)
+    print("Got result from {0}".format(server))
+    print(json.dumps(blob, sort_keys=True, indent=4))
 
 
 def run_verification(verifier):
@@ -20,6 +22,7 @@ def run_verification(verifier):
 
     d = verifier.verify(incoming)
     d.addCallback(print_result)
+    d.addErrback(print)
     d.addBoth(lambda _: reactor.callLater(0, run_verification, verifier))
     return d
 
