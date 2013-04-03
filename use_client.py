@@ -5,7 +5,7 @@ import json
 from twisted.internet import reactor
 from twisted.web.client import Agent
 
-from txyubico.client import YubiKeyVerifier
+from txyubikey.client import YubiKeyVerifier
 
 
 def print_result(result):
