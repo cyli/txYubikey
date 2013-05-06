@@ -89,14 +89,16 @@ class YubiKeyVerifier(object):
     @ivar scheme: "http" or "https" - defaults to 'https'
     @type scheme: C{str}
     """
+    _api_key = None
+
     def __init__(self, agent, verifier_id, api_key=None, nonce_generator=None,
                  validation_servers=None, scheme="https"):
         self.agent = agent
         self.verifier_id = verifier_id
-        self.api_key = api_key.decode('base64')
         self.scheme = scheme
-
+        self.api_key = api_key
         self.generate_nonce = nonce_generator
+
         if nonce_generator is None:
             self.generate_nonce = generate_nonce
 
@@ -105,6 +107,17 @@ class YubiKeyVerifier(object):
             self.validation_servers = (
                 'api.yubico.com', 'api2.yubico.com', 'api3.yubico.com',
                 'api4.yubico.com', 'api5.yubico.com')
+
+    @property
+    def api_key(self):
+        return self._api_key
+
+    @api_key.setter
+    def api_key(self, value):
+        if value is not None:
+            self._api_key = value.decode('base64')
+        else:
+            self._api_key = None
 
     def _maybe_sign_query(self, query_dict):
         """
@@ -298,7 +311,6 @@ class YubiKeyVerifier(object):
             that the OTP was rejected, but that a failure occured during
             validation)
         """
-
         query_dict = {
             'id': self.verifier_id,
             'otp': otp,
