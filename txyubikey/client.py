@@ -4,7 +4,6 @@ Client that verifies a Yubico OTP against a validation server.
 Only the v2 protocol is supported (see
 https://github.com/Yubico/yubikey-val/wiki/ValidationProtocolV20)
 """
-from cStringIO import StringIO
 from hashlib import sha1
 import hmac
 import re
@@ -12,24 +11,13 @@ from urllib import urlencode
 from urlparse import urlunsplit
 from uuid import uuid4
 
-from twisted.internet.defer import Deferred, DeferredList, fail
-from twisted.internet.protocol import Protocol
+from twisted.internet.defer import DeferredList, fail
+
+import treq
 
 
 _otp_re = re.compile("^\S{32,48}$")
 _nonce_re = re.compile("^\w{16,40}$")
-
-
-class _BodyReader(Protocol):
-    def __init__(self, deferred):
-        self.deferred = deferred
-        self.buffer = StringIO()
-
-    def dataReceived(self, data):
-        self.buffer.write(data)
-
-    def connectionLost(self, reason):
-        self.deferred.callback(self.buffer.getvalue())
 
 
 def generate_nonce():
@@ -41,6 +29,44 @@ def generate_nonce():
     @returns: a random C{str} nonce between 16 and 40 characters long
     """
     return uuid4().hex
+
+
+def sign_query(query_dict, api_key):
+    """
+    From: https://github.com/Yubico/yubikey-val/wiki/ValidationProtocolV20
+
+    The protocol uses HMAC-SHA-1 signatures. The HMAC key to use is the
+    client API key.
+
+    Generate the signature over the parameters in the message. Each
+    message contains a set of key/value pairs, and the signature is always
+    over the entire set (excluding the signature itself), and sorted in
+    alphabetical order of the keys. More precisely, to generate a message
+    signature do:
+
+    Alphabetically sort the set of key/value pairs by key order.
+
+    Construct a single line with each ordered key/value pair concatenated
+    using '&', and each key and value contatenated with '='. Do not add
+    any linebreaks. Do not add whitespace. For example: `a=2&b=1&c=3`.
+    Apply the HMAC-SHA-1 algorithm on the line as an octet string using
+    the API key as key.
+
+    Base 64 encode the resulting value according to RFC 4648, for example,
+    `t2ZMtKeValdA+H0jVpj3LIichn4=`. Append the value under key 'h' to the
+    message.
+
+    @param query_dict: C{dict} of query keys and values to maybe sign. If
+        C{self.api_key} is not C{None}
+
+    @return: the base64-encoded signature
+    """
+    sorted_pairs = sorted(query_dict.iteritems(),
+                          key=(lambda duo: duo[0]))
+    unsigned_message = "&".join(
+        ["=".join(p) for p in sorted_pairs if p[0] != 'h'])
+    hmac_obj = hmac.new(api_key, unsigned_message, sha1)
+    return hmac_obj.digest().encode('base64')
 
 
 class YubiKeyVerificationError(Exception):
@@ -91,9 +117,8 @@ class YubiKeyVerifier(object):
     """
     _api_key = None
 
-    def __init__(self, agent, verifier_id, api_key=None, nonce_generator=None,
-                 validation_servers=None, scheme="https"):
-        self.agent = agent
+    def __init__(self, verifier_id, api_key=None, nonce_generator=None,
+                 validation_servers=None, scheme="https", _treq=None):
         self.verifier_id = verifier_id
         self.scheme = scheme
         self.api_key = api_key
@@ -108,6 +133,11 @@ class YubiKeyVerifier(object):
                 'api.yubico.com', 'api2.yubico.com', 'api3.yubico.com',
                 'api4.yubico.com', 'api5.yubico.com')
 
+        if _treq is not None:
+            self._treq = _treq
+        else:
+            self._treq = treq
+
     @property
     def api_key(self):
         return self._api_key
@@ -118,47 +148,6 @@ class YubiKeyVerifier(object):
             self._api_key = value.decode('base64')
         else:
             self._api_key = None
-
-    def _maybe_sign_query(self, query_dict):
-        """
-        From: https://github.com/Yubico/yubikey-val/wiki/ValidationProtocolV20
-
-        The protocol uses HMAC-SHA-1 signatures. The HMAC key to use is the
-        client API key.
-
-        Generate the signature over the parameters in the message. Each
-        message contains a set of key/value pairs, and the signature is always
-        over the entire set (excluding the signature itself), and sorted in
-        alphabetical order of the keys. More precisely, to generate a message
-        signature do:
-
-        Alphabetically sort the set of key/value pairs by key order.
-
-        Construct a single line with each ordered key/value pair concatenated
-        using '&', and each key and value contatenated with '='. Do not add
-        any linebreaks. Do not add whitespace. For example: `a=2&b=1&c=3`.
-        Apply the HMAC-SHA-1 algorithm on the line as an octet string using
-        the API key as key.
-
-        Base 64 encode the resulting value according to RFC 4648, for example,
-        `t2ZMtKeValdA+H0jVpj3LIichn4=`. Append the value under key 'h' to the
-        message.
-
-        @param query_dict: C{dict} of query keys and values to maybe sign. If
-            C{self.api_key} is not C{None}, then the signature will be added to
-            the dictionary under the key name C{h}
-
-        @return: C{None}
-        """
-        if self.api_key is not None:
-            if 'h' in query_dict:
-                del query_dict['h']
-
-            sorted_pairs = sorted(query_dict.iteritems(),
-                                  key=(lambda duo: duo[0]))
-            unsigned_message = "&".join(["=".join(p) for p in sorted_pairs])
-            hmac_obj = hmac.new(self.api_key, unsigned_message, sha1)
-            query_dict['h'] = hmac_obj.digest().encode('base64')
 
     def _verify_response(self, response, orig_otp, orig_nonce):
         """
@@ -185,41 +174,20 @@ class YubiKeyVerifier(object):
                 "Received response that does not match the OTP that was "
                 "sent to be verified.")
 
-        signature = response_dict['h']
-
-        self._maybe_sign_query(response_dict)
-
-        if signature.decode('base64') != response_dict['h'].decode('base64'):
-            raise YubiKeyVerificationError(
-                "Received a response whose signature is invalid")
+        if self.api_key is not None:
+            sig = sign_query(response_dict, self.api_key)
+            if response_dict['h'].decode('base64') != sig.decode('base64'):
+                raise YubiKeyVerificationError(
+                    "Received a response whose signature is invalid")
 
         return response_dict
 
-    def _query_server(self, netloc, query_dict, query_string=None):
+    def _get_url(self, netloc, query_string):
         """
-        Hit a validation server URl and attempt to get a response.
+        :return: a URL based on the net location and query string
         """
-        def _check_for_200(response):
-            if response.code != 200:
-                raise Exception(str(response.code))
-            return response
-
-        def _deliver_response(response):
-            deferred = Deferred()
-            response.deliverBody(_BodyReader(deferred))
-            return deferred
-
-        if query_string is None:
-            query_string = urlencode(query_dict)
-
-        url = urlunsplit((self.scheme, netloc, 'wsapi/2.0/verify',
-                         query_string, ''))
-        d = self.agent.request('GET', url)
-        d.addCallback(_check_for_200)
-        d.addCallback(_deliver_response)
-        d.addCallback(self._verify_response, query_dict['otp'],
-                      query_dict['nonce'])
-        return d
+        return urlunsplit((self.scheme, netloc, 'wsapi/2.0/verify',
+                           query_string, ''))
 
     def _request_from_all_servers(self, query_dict):
         """
@@ -238,7 +206,8 @@ class YubiKeyVerifier(object):
         query_string = urlencode(query_dict)
 
         deferred_list = [
-            self._query_server(netloc, query_dict, query_string=query_string)
+            self._treq.get(self._get_url(netloc, query_string)).addCallback(
+                self._verify_response, query_dict['otp'], query_dict['nonce'])
             for netloc in self.validation_servers]
 
         def _check_results(results):
@@ -332,5 +301,7 @@ class YubiKeyVerifier(object):
             return fail(YubiKeyVerificationError(
                 "Nonce generator produced an invalid nonce"))
 
-        self._maybe_sign_query(query_dict)
+        if self.api_key is not None:
+            query_dict['h'] = sign_query(query_dict, self.api_key)
+
         return self._request_from_all_servers(query_dict)
