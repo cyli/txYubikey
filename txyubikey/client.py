@@ -230,10 +230,10 @@ class YubiKeyVerifier(object):
             if isinstance(results, list):
                 # this means that none of the requests succeeded, since
                 # otherwise the result would be a two-tuple
-                # for i, one_result in enumerate(results):
-                    # print '{0}: {1}'.format(
-                    #     self.validation_servers[i],
-                    #     str(one_result[1]))
+                for i, one_result in enumerate(results):
+                    print '{0}: {1}'.format(
+                        self.validation_servers[i],
+                        str(one_result[1]))
 
                 raise YubiKeyVerificationError(
                     "Could not successfully GET from any of the validation "
