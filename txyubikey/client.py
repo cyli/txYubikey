@@ -149,7 +149,7 @@ class YubiKeyVerifier(object):
         else:
             self._api_key = None
 
-    def _verify_response(self, response, orig_otp, orig_nonce):
+    def _verify_response(self, text_response, orig_otp, orig_nonce):
         """
         Check that the response is a valid response to our request - that is,
         the otp that was returned is the otp we sent originally, that the
@@ -161,8 +161,9 @@ class YubiKeyVerifier(object):
         otp=....\r\n
         h=...\r\n ...
         """
-        response_dict = dict([line.strip().split('=', 1) for line in
-                              response.split('\n') if line.strip('\r')])
+        response_dict = dict([line.strip(' ').split('=', 1) for line in
+                              re.split(r'\r\n', text_response)
+                              if line.strip()])
 
         if 'otp' in response_dict and response_dict['otp'] != orig_otp:
             raise YubiKeyVerificationError(
@@ -189,6 +190,15 @@ class YubiKeyVerifier(object):
         return urlunsplit((self.scheme, netloc, 'wsapi/2.0/verify',
                            query_string, ''))
 
+    def _check_200(self, response):
+        """
+        If the response code is not 200, raise an error
+        """
+        if response.code != 200:
+            raise YubiKeyVerificationError(
+                "Received {0} response.".format(response.code))
+        return response
+
     def _request_from_all_servers(self, query_dict):
         """
         From: http://www.yubico.com/develop/open-source-software/web-api-clients/server/
@@ -206,8 +216,11 @@ class YubiKeyVerifier(object):
         query_string = urlencode(query_dict)
 
         deferred_list = [
-            self._treq.get(self._get_url(netloc, query_string)).addCallback(
-                self._verify_response, query_dict['otp'], query_dict['nonce'])
+            (self._treq.get(self._get_url(netloc, query_string))
+                .addCallback(self._check_200)
+                .addCallback(self._treq.text_content)
+                .addCallback(self._verify_response, query_dict['otp'],
+                             query_dict['nonce']))
             for netloc in self.validation_servers]
 
         def _check_results(results):
@@ -217,11 +230,10 @@ class YubiKeyVerifier(object):
             if isinstance(results, list):
                 # this means that none of the requests succeeded, since
                 # otherwise the result would be a two-tuple
-                for i, one_result in enumerate(results):
-                    print '{0}: {1}'.format(
-                        self.validation_servers[i],
-                        str(one_result[1]))
-                    deferred_list[i].addErrback(lambda _: None)
+                # for i, one_result in enumerate(results):
+                    # print '{0}: {1}'.format(
+                    #     self.validation_servers[i],
+                    #     str(one_result[1]))
 
                 raise YubiKeyVerificationError(
                     "Could not successfully GET from any of the validation "
@@ -232,7 +244,8 @@ class YubiKeyVerifier(object):
             return (blob, self.validation_servers[index])
 
         # TODO: do something about the giant stack of errors
-        d = DeferredList(deferred_list, fireOnOneCallback=True)
+        d = DeferredList(deferred_list, fireOnOneCallback=True,
+                         consumeErrors=True)
         return d.addCallback(_check_results)
 
     def verify(self, otp, timestamp=None, sl=None, timeout=None):
