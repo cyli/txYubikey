@@ -16,18 +16,6 @@ import treq
 from txyubikey import client
 
 
-class _Tester(object):
-    """
-    Easier way to test what things are called with.
-    """
-    def __init__(self, test_type, test_function):
-        self.test_type = test_type
-        self.test_function = test_function
-
-    def __eq__(self, other):
-        return isinstance(other, self.test_type) and self.test_function(other)
-
-
 def get_query_dict(url):
     splitted = urlsplit(url)
     return parse_qs(splitted.query)
