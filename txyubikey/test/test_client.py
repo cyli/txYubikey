@@ -303,6 +303,7 @@ class YubiKeyVerifierTestCase(TestCase):
             mock.MagicMock(spec=['code'], code=202))
         f = self.failureResultOf(d)
         self.assertTrue(f.check(client.YubiKeyVerificationError))
+        self.flushLoggedErrors(client.YubiKeyVerificationError)
 
     def test_verify_parses_response(self):
         """
@@ -338,6 +339,7 @@ class YubiKeyVerifierTestCase(TestCase):
         self.deferreds.values()[0].callback(mock.MagicMock(code=200))
         f = self.failureResultOf(d)
         self.assertTrue(f.check(client.YubiKeyVerificationError))
+        self.flushLoggedErrors(client.YubiKeyVerificationError)
 
     def test_verify_errors_if_nonces_do_not_match(self):
         """
@@ -351,6 +353,7 @@ class YubiKeyVerifierTestCase(TestCase):
         self.deferreds.values()[0].callback(mock.MagicMock(code=200))
         f = self.failureResultOf(d)
         self.assertTrue(f.check(client.YubiKeyVerificationError))
+        self.flushLoggedErrors(client.YubiKeyVerificationError)
 
     def test_verify_errors_if_response_signature_invalid(self):
         """
@@ -370,6 +373,7 @@ class YubiKeyVerifierTestCase(TestCase):
         self.deferreds.values()[0].callback(mock.MagicMock(code=200))
         f = self.failureResultOf(d)
         self.assertTrue(f.check(client.YubiKeyVerificationError))
+        self.flushLoggedErrors(client.YubiKeyVerificationError)
 
     def test_verify_returns_first_success(self):
         """
@@ -418,3 +422,4 @@ class YubiKeyVerifierTestCase(TestCase):
 
         f = self.failureResultOf(d)
         self.assertTrue(f.check(client.YubiKeyVerificationError))
+        self.flushLoggedErrors(client.YubiKeyVerificationError)

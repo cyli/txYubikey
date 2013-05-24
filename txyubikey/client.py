@@ -13,9 +13,6 @@ from uuid import uuid4
 
 from twisted.internet.defer import DeferredList, fail
 
-import treq
-
-
 _otp_re = re.compile("^\S{32,48}$")
 _nonce_re = re.compile("^\w{16,40}$")
 
@@ -86,13 +83,6 @@ class YubiKeyVerifier(object):
 
     3. http://www.yubico.com/develop/open-source-software/web-api-clients/server/
 
-    @ivar agent: The agent to use to verify against the validation server.
-        Note that if the agent does not validate ssl certificates, the api key
-        really should be provided so that requests are response signatures are
-        validated.
-    @type agent: L{twisted.web.client.Agent} or a L{twisted.web.client.Agent}
-        wrapper
-
     @ivar verifier_id: Specifies the requestor so that the end-point can
         retrieve correct shared secret for signing the response.
     @type verifier_id: C{str}
@@ -114,15 +104,24 @@ class YubiKeyVerifier(object):
 
     @ivar scheme: "http" or "https" - defaults to 'https'
     @type scheme: C{str}
+
+    @ivar logger: The logging module to use.  Should match the twisted logger.
+        If not provided, no logging will happen be done.
+
+    @ivar _treq: The treq object to use to make requests.  This is mainly used
+        for testing.
     """
     _api_key = None
 
     def __init__(self, verifier_id, api_key=None, nonce_generator=None,
-                 validation_servers=None, scheme="https", _treq=None):
+                 validation_servers=None, scheme="https", logger=None,
+                 _treq=None):
         self.verifier_id = verifier_id
         self.scheme = scheme
         self.api_key = api_key
         self.generate_nonce = nonce_generator
+        self.logger = logger
+        self._treq = _treq
 
         if nonce_generator is None:
             self.generate_nonce = generate_nonce
@@ -133,9 +132,8 @@ class YubiKeyVerifier(object):
                 'api.yubico.com', 'api2.yubico.com', 'api3.yubico.com',
                 'api4.yubico.com', 'api5.yubico.com')
 
-        if _treq is not None:
-            self._treq = _treq
-        else:
+        if self._treq is None:  # pragma: no cover
+            import treq
             self._treq = treq
 
     @property
@@ -231,9 +229,10 @@ class YubiKeyVerifier(object):
                 # this means that none of the requests succeeded, since
                 # otherwise the result would be a two-tuple
                 for i, one_result in enumerate(results):
-                    print '{0}: {1}'.format(
-                        self.validation_servers[i],
-                        str(one_result[1]))
+                    if self.logger is not None:  # pragma: no cover
+                        self.logger.debug('{0}: {1}'.format(
+                            self.validation_servers[i],
+                            str(one_result[1])))
 
                 raise YubiKeyVerificationError(
                     "Could not successfully GET from any of the validation "

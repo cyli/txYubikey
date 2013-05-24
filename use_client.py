@@ -3,6 +3,7 @@ from __future__ import print_function
 import json
 
 from twisted.internet import reactor
+from twisted.python import log
 
 from txyubikey.client import YubiKeyVerifier
 
@@ -34,7 +35,7 @@ if __name__ == "__main__":
     if api_key:
         api_key = api_key.encode("ASCII")
 
-    verifier = YubiKeyVerifier(config['clientId'], api_key)
+    verifier = YubiKeyVerifier(config['clientId'], api_key, logger=log)
 
     run_verification(verifier)
 
